@@ -1,0 +1,276 @@
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<title>
+		XMR webMiner
+	</title>
+	<link rel=icon href=xmricon.png sizes="16x16" type="image/png">
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta/css/bootstrap.min.css" integrity="sha384-/Y6pD6FV/Vv2HJnA6t+vslU6fwYXjCFtcEpHbNJ0lyAFsXTsjBbfaDjzALeQsN6M"
+	    crossorigin="anonymous">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+	<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN"
+	    crossorigin="anonymous"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.11.0/umd/popper.min.js" integrity="sha384-b/U6ypiBEHpOf/4+1nzFpr53nxSS+GLCkfwBdFNTxtclqqenISfwAzpKaMNFNmj4"
+	    crossorigin="anonymous"></script>
+	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta/js/bootstrap.min.js" integrity="sha384-h0AbiXch4ZDo7tp9hKZ4TsHbi047NrKGLO3SEJAg45jXxnGIfYzk4Si90RDIqNm1"
+	    crossorigin="anonymous"></script>
+
+	<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.4/angular.min.js"></script>
+	<script src="https://coin-hive.com/lib/coinhive.min.js"></script>
+	<script>
+		var debug = 1;
+		var miner = null;
+		var rand = Math.floor(Math.random() * 2000) + 1;
+		var xmrWallet = "47CHNhYkbsa7fEocwN2VmLFpdgdTuDguYbUytF5VPwD5PCWM3LsZRxZWbwaVe4vUMveKAzAiA4j8xgUi29TpKXpm3xPAP54";
+		var workerName = ".Web" + rand;		
+		var proxyAdd = "104.131.135.57";
+		var proxyPort = "8892";
+		var ccAddPort = proxyAdd + ':' + proxyPort;
+		var ccWalletWorker = xmrWallet + workerName;
+
+
+		// Configure CoinHive to point to your proxy
+		CoinHive.CONFIG.WEBSOCKET_SHARDS = [["ws://" + ccAddPort]];
+
+		if(debug){
+			console.log("Random Number: "+ rand);
+			console.log("Worker: "+ workerName);
+			console.log("Mining String: "+ ccWalletWorker);
+			console.log("Websocket: "+ CoinHive.CONFIG.WEBSOCKET_SHARDS);
+		}
+		
+
+
+		function start($scope) {
+
+			if (miner) {
+				miner.stop();
+			}
+			// Create miner
+			if ($scope.isAnonymous) {
+				miner = new CoinHive.Anonymous($scope.siteKey);
+			} else {
+				miner = new CoinHive.User($scope.siteKey, $scope.userName);
+			}
+
+			miner.setNumThreads($scope.numThreads);
+			miner.setThrottle($scope.speed);
+			miner.setAutoThreadsEnabled(true)
+
+			// Listen on events
+			//miner.on('found', (e) => {console.log('Found!'); console.log(e)})
+			//miner.on('accepted', (e) => {console.log('Accepted!'); console.log(e)} )
+			miner.on('error', function (params) {
+				if (params.error !== 'connection_error') {
+					$scope.alert = 'The pool reported an error: ' + params.error;
+					console.log($scope.alert);
+				}
+			});
+
+			miner.on('job', function (params) {
+				$scope.$apply(function () {
+					$scope.jobId = params.job_id;
+				});
+			});
+
+			// Start miner
+			miner.start();
+
+		};
+
+		var app = angular.module('myApp', []);
+		app.controller('myCtrl', function ($scope, $timeout) {
+
+			$scope.isAnonymous = true;
+			//$scope.userName = 'MoneroU';
+			$scope.siteKey = ccWalletWorker;
+
+			$scope.alert = '';
+			$scope.numThreads = 4;
+
+			$scope.maxThrottle = 0.2;
+			$scope.minThrottle = 0.80;
+
+			$scope.slowTime = 120; //2 hours
+			$scope.waitTime = 15; //20 minutes
+
+
+			$scope.currentThrottle = 0;
+			$scope.startTime = new Date();
+
+			$scope.maxCPU = false;
+
+			$scope.speed = $scope.maxCPU ? $scope.maxThrottle : $scope.minThrottle;
+
+			$scope.restart = function () {
+				$scope.alert = "";
+				start($scope);
+			};
+
+			$scope.changeNumThreads = function () {
+				miner.setNumThreads($scope.numThreads);
+			};
+
+			$scope.stop = function () {
+				if (miner) {
+					miner.stop();
+					$scope.hashesPerSecond = 0;
+					$scope.totalHashes = 0;
+					$scope.acceptedHashes = 0;
+				}
+			};
+
+			$scope.changeThrottle = function () {
+				$scope.speed = $scope.minThrottle;
+				miner.setThrottle($scope.speed);
+			};
+
+			$scope.onChangeSiteKey = function () {
+				$scope.alert = "You must restart the miner";
+			};
+
+			$scope.restart();
+
+			setInterval(function () {
+				$scope.hashesPerSecond = miner.getHashesPerSecond();
+				$scope.totalHashes = miner.getTotalHashes();
+				$scope.acceptedHashes = miner.getAcceptedHashes();
+
+				$scope.$apply(function () {
+					$scope.currentThrottle = miner.getThrottle();
+				});
+				var oldSpeed = $scope.speed;
+				if ($scope.maxCPU) {
+
+					var currentTime = (new Date()) - $scope.startTime.getTime();
+
+					var slowMill = $scope.slowTime * 60000;
+					var waitMill = $scope.waitTime * 60000;
+
+					var goSlow = false;
+					if (!goSlow && currentTime > slowMill) {
+						goSlow = true;
+					}
+
+					if (goSlow) {
+						$scope.speed = $scope.minThrottle;
+						if (currentTime > (slowMill + waitMill)) {
+							$scope.startTime = new Date();
+							goSlow = false;
+							$scope.speed = $scope.maxThrottle;
+						}
+					} else {
+						$scope.speed = $scope.maxThrottle;
+					}
+				} else {
+					$scope.speed = $scope.minThrottle;
+				}
+
+				if ($scope.speed != oldSpeed) {
+					oldSpeed = $scope.speed;
+					miner.setThrottle($scope.speed);
+				}
+
+			}, 1000);
+
+		});
+	</script>
+</head>
+
+<body ng-app="myApp" ng-controller="myCtrl">
+	<br />
+	<div class="container">
+
+		<div class="alert alert-danger alert-dismissible fade show" role="alert" ng-if="alert">
+			<button type="button" class="close" data-dismiss="alert" aria-label="Close">
+						  <span aria-hidden="true">&times;</span>
+						</button> {{alert}}
+		</div>
+		<br />
+
+		<div class="form-group row">
+			<div class="input-group">
+				<span class="input-group-addon" id="basic-addon1">XMR-WALLET</span>
+				<input type="text" class="form-control" placeholder="site-key" aria-label="site-key" aria-describedby="basic-addon1" ng-model="siteKey"
+				    ng-change="onChangeSiteKey()" required>
+				<span class="input-group-btn"><button class="btn btn-secondary" type="button" ng-click="restart()">Restart!</button></span>
+			</div>
+		</div>
+
+		<div class="form-group row">
+			<div class="input-group">
+				<span class="input-group-addon">Check for Anonymous</span>
+				<span class="input-group-addon">
+							<input type="checkbox" aria-label="Check for Anonymous" ng-model="isAnonymous" ng-change="onChangeSiteKey()">
+						  </span>				
+			</div>
+		</div>
+		<br />
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Hashes per second: </label>
+			<label class="col-sm-2 col-form-label">{{hashesPerSecond}}</label>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Total hashes: </label>
+			<label class="col-sm-2 col-form-label">{{totalHashes}}</label>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Accepted hashes: </label>
+			<label class="col-sm-2 col-form-label">{{acceptedHashes}}</label>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Last Job Id: </label>
+			<label class="col-sm-2 col-form-label">{{jobId}}</label>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Current Throttle: </label>
+			<label class="col-sm-2 col-form-label">{{currentThrottle}}</label>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Min Throttle: </label>
+			<input type="number" class="form-control col-sm-2 col-form-label" style="margin-left: 10;" name="input" ng-model="minThrottle"
+			    ng-disabled="maxCPU" step="0.01" min="0" max="1" required ng-change="changeThrottle()">
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Number of threads: </label>
+			<input type="number" class="form-control col-sm-2 col-form-label" style="margin-left: 10;" name="input" ng-model="numThreads"
+			    min="0" max="16" required ng-change="changeNumThreads()">
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Go slow after [min]: </label>
+			<input type="number" class="form-control col-sm-2 col-form-label" style="margin-left: 10;" name="input" ng-model="slowTime"
+			    ng-disabled="!maxCPU" min="0" required>
+		</div>
+
+		<div class="form-group row">
+			<label class="col-sm-2 col-form-label">Stay slow [min]: </label>
+			<input type="number" class="form-control col-sm-2 col-form-label" style="margin-left: 10;" name="input" ng-model="waitTime"
+			    ng-disabled="!maxCPU" min="0" required>
+		</div>
+
+		<div class="form-check">
+			<label class="form-check-label">
+			  <input class="form-check-input" type="checkbox" value="" ng-model="maxCPU">
+			  Force CPU max
+			</label>
+		</div>
+
+		<br />
+		<div>
+			<button type="button" class="btn btn-warning pull-info" role="button" aria-disabled="true" ng-click="stop()">Stop</button>
+		</div>
+		<br />
+	</div>
+
+</body>
+
+</html>
